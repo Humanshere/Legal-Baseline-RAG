@@ -25,6 +25,23 @@ def setup_corpus(dataset_name="joyboseroy/inIRAC", num_records=45, corpus_ids_fi
 
     print(f"Total records in dataset: {len(ds)}")
     
+    # If citation is nested inside a 'case' column (as in inIRAC), extract it
+    if "citation" not in ds.column_names and "case" in ds.column_names:
+        print("Extracting 'citation' from nested 'case' field...")
+        def extract_nested_fields(example):
+            case_data = example.get("case", {})
+            citation_val = case_data.get("citation", "")
+            if not citation_val:
+                citation_val = case_data.get("name", "")
+                
+            return {
+                "citation": citation_val,
+                "case_name": case_data.get("name", ""),
+                "court": case_data.get("court", ""),
+                "year": case_data.get("year", "")
+            }
+        ds = ds.map(extract_nested_fields)
+
     citation_field = "citation"
     if citation_field not in ds.column_names:
         print(f"Warning: 'citation' field not found. Available fields: {ds.column_names}")
