@@ -130,6 +130,14 @@ def chunk_text(working_corpus, embed_model_name, chunk_size=500, chunk_overlap=5
                 
             text = "\n\n".join([p for p in parts if p.strip()])
             
+        # If absolutely no text was found in IRAC fields, fallback to extraction_notes or dump row
+        if not text:
+            if "extraction_notes" in row and isinstance(row["extraction_notes"], str) and row["extraction_notes"].strip():
+                text = row["extraction_notes"]
+            else:
+                # Last resort: just stringify the row so we have SOMETHING to index
+                text = str(row)
+                
         if not text:
              continue
              
@@ -157,6 +165,9 @@ def chunk_text(working_corpus, embed_model_name, chunk_size=500, chunk_overlap=5
     
 def embed_and_store(chunks, model_name):
     """Embeds the chunks and stores them in a FAISS Flat L2 index."""
+    if not chunks:
+        raise ValueError("No chunks were created from the corpus! The documents might be entirely empty.")
+        
     print(f"Loading embedding model: {model_name}")
     model = SentenceTransformer(model_name)
     
