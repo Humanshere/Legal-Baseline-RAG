@@ -1,0 +1,9 @@
+datasets
+langchain
+langchain-text-splitters
+transformers
+sentence-transformers
+faiss-cpu
+numpy
+ollama
+tqdm
