@@ -3,7 +3,7 @@ import os
 from typing import List, Dict, Any
 
 from datasets import load_dataset
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import faiss
@@ -25,26 +25,44 @@ def setup_corpus(dataset_name="joyboseroy/inIRAC", num_records=45, corpus_ids_fi
 
     print(f"Total records in dataset: {len(ds)}")
     
-    if "citation" not in ds.column_names:
-        raise ValueError("Dataset does not contain a 'citation' field!")
+    citation_field = "citation"
+    if citation_field not in ds.column_names:
+        print(f"Warning: 'citation' field not found. Available fields: {ds.column_names}")
+        fallback_fields = ['id', 'case_id', 'filename', 'name', 'file', 'case_name']
+        for f in fallback_fields:
+            if f in ds.column_names:
+                citation_field = f
+                print(f"Using '{f}' as the identifier field instead of 'citation'.")
+                break
+        if citation_field not in ds.column_names:
+            raise ValueError(f"Dataset does not contain 'citation' or any known identifier field! Columns found: {ds.column_names}")
         
-    print("Sorting records by 'citation' (alphabetically, case-sensitive)...")
-    # sort by citation alphabetically
-    sorted_ds = ds.sort("citation")
+    print(f"Sorting records by '{citation_field}' (alphabetically, case-sensitive)...")
+    # sort by identifier alphabetically
+    sorted_ds = ds.sort(citation_field)
     
     # Take the first 'num_records'
     working_corpus = sorted_ds.select(range(min(num_records, len(sorted_ds))))
     
     # Save exact citations to corpus_ids.json for reproducibility
-    citations = working_corpus["citation"]
+    citations = working_corpus[citation_field]
     with open(corpus_ids_file, "w") as f:
         json.dump(citations, f, indent=4)
         
     print(f"Saved {len(citations)} case citations to {corpus_ids_file}")
+    
+    # Let's map it to "citation" column name so downstream code expecting "citation" still works
+    if citation_field != "citation":
+        # Check if we can rename
+        if "citation" not in working_corpus.column_names:
+            working_corpus = working_corpus.rename_column(citation_field, "citation")
+    
     return working_corpus
 
 def chunk_text(working_corpus, embed_model_name, chunk_size=500, chunk_overlap=50) -> List[Dict[str, Any]]:
-    """Chunks the raw judgment text field into overlapping chunks."""
+    """Chunks the raw judgment text field into overlapping chunks. 
+       If no single raw text field exists, concatenates available IRAC fields 
+       to form a plain-text baseline without structural annotations."""
     print(f"Chunking documents (~{chunk_size} tokens, {chunk_overlap} overlap)...")
     
     # Use the model's exact tokenizer for precise token chunking
@@ -58,25 +76,43 @@ def chunk_text(working_corpus, embed_model_name, chunk_size=500, chunk_overlap=5
     
     chunks = []
     
-    # Identify the raw text field dynamically, bypassing pre-extracted IRAC fields
-    features = working_corpus.column_names
-    raw_text_field = 'text'
-    if 'text' not in features:
-        if 'judgment' in features:
-            raw_text_field = 'judgment'
-        elif 'judgment_text' in features:
-            raw_text_field = 'judgment_text'
-        else:
-            # Fallback search for a plausible text column
-            for col in features:
-                if 'text' in col or 'judg' in col:
-                    raw_text_field = col
-                    break
-    
-    print(f"Using '{raw_text_field}' field for raw judgment text.")
-    
     for row in tqdm(working_corpus, desc="Chunking records"):
-        text = row.get(raw_text_field, "")
+        # If there's a dedicated raw text field, use it. Otherwise, concatenate IRAC text fields.
+        text = ""
+        if "text" in row and isinstance(row["text"], str) and row["text"].strip():
+            text = row["text"]
+        elif "judgment" in row and isinstance(row["judgment"], str) and row["judgment"].strip():
+            text = row["judgment"]
+        else:
+            # Flatten IRAC fields into plain text, discarding structure for the baseline
+            parts = []
+            
+            # Extract issues
+            if "issues" in row and isinstance(row["issues"], list):
+                for issue in row["issues"]:
+                    if isinstance(issue, dict) and "text" in issue:
+                        parts.append(issue["text"])
+                    elif isinstance(issue, str):
+                        parts.append(issue)
+                        
+            # Extract rules
+            if "rules" in row and isinstance(row["rules"], list):
+                for rule in row["rules"]:
+                    if isinstance(rule, dict) and "text" in rule:
+                        parts.append(rule["text"])
+                    elif isinstance(rule, str):
+                        parts.append(rule)
+                        
+            # Extract analysis_summary
+            if "analysis_summary" in row and isinstance(row["analysis_summary"], str):
+                parts.append(row["analysis_summary"])
+                
+            # Extract conclusion
+            if "conclusion" in row and isinstance(row["conclusion"], str):
+                parts.append(row["conclusion"])
+                
+            text = "\n\n".join([p for p in parts if p.strip()])
+            
         if not text:
              continue
              
