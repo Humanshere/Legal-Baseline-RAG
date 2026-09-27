@@ -62,7 +62,7 @@ def setup_corpus(dataset_name="joyboseroy/inIRAC", num_records=45, corpus_ids_fi
     working_corpus = sorted_ds.select(range(min(num_records, len(sorted_ds))))
     
     # Save exact citations to corpus_ids.json for reproducibility
-    citations = working_corpus[citation_field]
+    citations = [str(c) for c in working_corpus[citation_field]]
     with open(corpus_ids_file, "w") as f:
         json.dump(citations, f, indent=4)
         
